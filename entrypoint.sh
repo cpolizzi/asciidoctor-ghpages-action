@@ -3,6 +3,49 @@
 # Exit if a command fails
 set -e
 
+#=====
+# Functions
+
+##
+# Exclude all submodules
+function get-path-excludes() {
+    git submodule status | awk '{ print $2 }' | xargs --replace="{}" echo -not -path */{}/*
+}
+
+##
+# Find all AsciiDoc files that are not located in submodules
+function get-adoc-files() {
+    find . \
+        -name "*$INPUT_ADOC_FILE_EXT" \
+        -type f ${path_excludes}
+}
+
+##
+# Obtain Asciizdoc file creation date (first commit)
+function get-adoc-creation-date() {
+    local adoc_file="${1}"
+
+    git --no-pager log --diff-filter=A --pretty=format:%ci -- "${adoc_file}"
+}
+
+##
+# Generate HTML5 from AsciiDoc and inject the following attributes:
+#   * `creation_date` - Date of creation (e.g., first commit)
+function generate-html5-from-adoc() {
+    local adoc_file="${1}"; shift
+    local creation_date="${1}"; shift
+
+    asciidoctor \
+        --attribute creation-timestamp="${creation_date}" \
+        --backend html5 \
+        $INPUT_ASCIIDOCTOR_PARAMS \
+        "${adoc_file}"
+}
+#-----
+
+
+##
+# And... Action!
 OWNER="$(echo "$GITHUB_REPOSITORY" | cut -d'/' -f 1)"
 
 if [[ "$INPUT_ADOC_FILE_EXT" != .* ]]; then
@@ -44,8 +87,14 @@ fi
 eval "$INPUT_PRE_BUILD"
 
 if [[ $INPUT_SLIDES_SKIP_ASCIIDOCTOR_BUILD == false ]]; then
-    echo "Converting AsciiDoc files to HTML"
-    find . -name "*$INPUT_ADOC_FILE_EXT" -exec asciidoctor -b html $INPUT_ASCIIDOCTOR_PARAMS {} \;
+    path_excludes=$(get-path-excludes)
+    adoc_files=$(get-adoc-files)
+
+    for adoc_file in ${adoc_files}; do
+        creation_date=$(get-adoc-creation-date "${adoc_file}")
+        echo "Generating HTML5 for ${adoc_file}, created on: '${creation_date}'"
+        generate-html5-from-adoc "${adoc_file}" "${creation_date}"
+    done
     find . -name "README.html" -execdir ln -s "README.html" "index.html" \;
     find . -name "*$INPUT_ADOC_FILE_EXT" -exec git rm -f --cached {} \;
 fi
